@@ -10,7 +10,7 @@ A comprehensive Python-based system for detecting anomalies in 3rd Party Logisti
 - **Statistical Anomaly Detection**: Detect outliers using 3-sigma rule and rolling window analysis
 - **Duplicate Detection**: Identify potential duplicate invoices using multiple criteria
 - **Future Date Detection**: Flag invoices with future dates
-- **AI Chatbot**: Get detailed explanations of anomalies using OpenAI GPT-4
+- **AI Chatbot**: Get detailed explanations of anomalies using llama 3b - Can configure any model
 
 ### Anomaly Detection Methods
 
