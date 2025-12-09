@@ -1,0 +1,278 @@
+# 3PL Invoice Anomaly Analysis - Technical Guide
+
+## Overview
+This document provides detailed technical information about the anomaly detection algorithms and analysis methods used in the 3PL Invoice Anomaly Detection System.
+
+## Anomaly Detection Categories
+
+### 1. Future-Dated Invoices
+**Purpose**: Identify invoices with dates in the future, indicating potential data entry errors.
+
+**Detection Method**:
+```python
+future_mask = df['invoice_date'] > current_date
+```
+
+**Risk Level**: HIGH
+- These are clear data quality issues
+- May indicate system clock problems or manual entry errors
+- Should be investigated immediately
+
+**Business Impact**:
+- Can skew financial reporting
+- May cause payment processing issues
+- Indicates process control problems
+
+### 2. Duplicate Invoice Detection
+**Purpose**: Identify potential duplicate payments using multiple detection methods.
+
+#### Method 1: Exact Duplicates
+```python
+exact_duplicates = df.duplicated(subset=['invoice_number', 'vendor', 'amount'], keep=False)
+```
+- Same invoice number, vendor, and amount
+- Risk Level: HIGH
+
+#### Method 2: Suspicious Invoice Numbers
+```python
+invoice_vendor_groups = df.groupby(['invoice_number', 'vendor'])
+# Flag groups with same invoice/vendor but different amounts
+```
+- Same invoice number and vendor with different amounts
+- Risk Level: HIGH (potential fraud or billing errors)
+
+#### Method 3: Amount/Date Duplicates
+```python
+vendor_amount_date_groups = df.groupby(['vendor', 'amount', df['invoice_date'].dt.date])
+# Flag groups with multiple invoices for same vendor/amount/date
+```
+- Different invoice numbers but same vendor, amount, and date
+- Risk Level: MEDIUM
+
+#### Method 4: Similar Amount Detection
+```python
+diff_pct = abs(amounts[i] - amounts[j]) / max(amounts[i], amounts[j])
+if diff_pct < 0.01:  # Within 1%
+    # Flag as potential duplicate
+```
+- Amounts within 1% from same vendor on same day
+- Risk Level: MEDIUM
+
+### 3. Statistical Anomaly Detection
+**Purpose**: Identify invoices with amounts significantly different from historical patterns.
+
+#### Rolling Window Analysis
+**Configuration**:
+- Default window: 9 months
+- Minimum periods: 3 invoices
+- Vendor-specific analysis
+
+**Implementation**:
+```python
+rolling_window = f"{rolling_months * 30}D"
+vendor_data['rolling_mean'] = vendor_data['amount'].rolling(
+    window=rolling_window, min_periods=3
+).mean()
+vendor_data['rolling_std'] = vendor_data['amount'].rolling(
+    window=rolling_window, min_periods=3
+).std()
+```
+
+#### Z-Score Calculation
+```python
+z_score = (amount - rolling_mean) / rolling_std
+# Flag if abs(z_score) > sigma_threshold (default: 3.0)
+```
+
+#### Global Statistical Methods
+
+**Method 1: Tukey's Method (IQR)**
+```python
+Q1 = df['amount'].quantile(0.25)
+Q3 = df['amount'].quantile(0.75)
+IQR = Q3 - Q1
+lower_bound = Q1 - 1.5 * IQR
+upper_bound = Q3 + 1.5 * IQR
+# Flag outliers beyond bounds
+```
+
+**Method 2: Modified Z-Score (MAD)**
+```python
+median = df['amount'].median()
+mad = np.median(np.abs(df['amount'] - median))
+modified_z_scores = 0.6745 * (df['amount'] - median) / mad
+# Flag if abs(modified_z_score) > 3.5
+```
+
+**Method 3: Extreme Outlier Detection**
+```python
+mean_amount = df['amount'].mean()
+std_amount = df['amount'].std()
+# Flag if more than 5 standard deviations from mean
+extreme_outliers = df[abs(df['amount'] - mean_amount) > 5 * std_amount]
+```
+
+## Risk Assessment Framework
+
+### Risk Levels
+1. **HIGH RISK**
+   - Future-dated invoices
+   - Exact duplicates
+   - Suspicious invoice number patterns
+
+2. **MEDIUM RISK**
+   - Statistical outliers (3+ sigma)
+   - Similar amount duplicates
+   - Vendor frequency anomalies
+
+3. **LOW RISK**
+   - Minor statistical variations (2-3 sigma)
+   - Single occurrence anomalies
+
+### Financial Impact Calculation
+```python
+financial_impact = {
+    'total_amount': anomalous_invoices['amount'].sum(),
+    'average_amount': anomalous_invoices['amount'].mean(),
+    'max_amount': anomalous_invoices['amount'].max(),
+    'affected_vendors': anomalous_invoices['vendor'].nunique()
+}
+```
+
+## Configuration Parameters
+
+### Anomaly Detection Settings
+- **rolling_months**: 3-24 months (default: 9)
+  - Shorter windows: More sensitive to recent changes
+  - Longer windows: More stable baselines, less sensitive
+
+- **sigma_threshold**: 1.0-5.0 (default: 3.0)
+  - Lower values: More sensitive, higher false positives
+  - Higher values: Less sensitive, may miss anomalies
+
+### Recommended Settings by Use Case
+1. **High-volume, stable operations**: rolling_months=12, sigma_threshold=3.0
+2. **Seasonal business**: rolling_months=6, sigma_threshold=2.5
+3. **New vendor relationships**: rolling_months=3, sigma_threshold=2.0
+4. **Mature, established processes**: rolling_months=18, sigma_threshold=3.5
+
+## Performance Considerations
+
+### Data Volume Guidelines
+- **Small datasets** (<1000 invoices): Use global methods primarily
+- **Medium datasets** (1000-10000): Vendor-specific + global analysis
+- **Large datasets** (>10000): Optimize rolling window calculations
+
+### Processing Optimization
+```python
+# Efficient groupby operations
+for vendor in df['vendor'].unique():
+    vendor_data = df_sorted[df_sorted['vendor'] == vendor].copy()
+    # Process vendor-specific statistics
+```
+
+## Validation and Quality Checks
+
+### Data Quality Requirements
+1. **Required Fields**: invoice_number, amount, vendor, invoice_date
+2. **Data Types**: Proper datetime and numeric formats
+3. **Completeness**: No null values in critical fields
+4. **Validity**: Positive amounts, reasonable date ranges
+
+### Anomaly Validation
+```python
+def validate_anomaly(df, invoice_index, anomaly_type):
+    # Check if anomaly is still valid after data cleaning
+    # Verify statistical significance
+    # Confirm business logic alignment
+```
+
+## Integration with Business Processes
+
+### Workflow Integration
+1. **Daily Processing**: Automated anomaly detection on new invoices
+2. **Weekly Reviews**: Comprehensive analysis with trending
+3. **Monthly Reporting**: Statistical pattern analysis and vendor performance
+
+### Alert Mechanisms
+- **Immediate**: High-risk anomalies (future dates, exact duplicates)
+- **Daily Digest**: Medium-risk statistical outliers
+- **Weekly Summary**: Trend analysis and pattern recognition
+
+## Machine Learning Enhancements
+
+### Future Improvements
+1. **Unsupervised Learning**: Isolation Forest, One-Class SVM
+2. **Time Series Analysis**: ARIMA models for seasonal patterns
+3. **Vendor Behavior Modeling**: Individual vendor pattern recognition
+4. **Ensemble Methods**: Combining multiple detection algorithms
+
+### Feature Engineering
+```python
+# Additional features for ML models
+df['amount_log'] = np.log(df['amount'])
+df['day_of_week'] = df['invoice_date'].dt.dayofweek
+df['month'] = df['invoice_date'].dt.month
+df['vendor_frequency'] = df.groupby('vendor')['invoice_date'].transform('count')
+```
+
+## Monitoring and Metrics
+
+### Key Performance Indicators
+1. **Detection Rate**: Percentage of true anomalies identified
+2. **False Positive Rate**: Percentage of normal invoices flagged
+3. **Processing Time**: Average time per invoice analysis
+4. **Coverage**: Percentage of invoice volume analyzed
+
+### Statistical Monitoring
+```python
+def calculate_detection_metrics(df, anomalies, validated_anomalies):
+    precision = len(validated_anomalies) / len(anomalies)
+    recall = len(validated_anomalies) / len(true_anomalies)
+    f1_score = 2 * (precision * recall) / (precision + recall)
+    return {'precision': precision, 'recall': recall, 'f1': f1_score}
+```
+
+## Troubleshooting Common Issues
+
+### Low Detection Accuracy
+- Adjust sigma_threshold based on business requirements
+- Increase rolling_months for more stable baselines
+- Check data quality and completeness
+
+### High False Positive Rate
+- Increase sigma_threshold
+- Add vendor-specific whitelist rules
+- Implement business rule exceptions
+
+### Performance Issues
+- Optimize rolling window calculations
+- Use vectorized operations
+- Consider data sampling for large datasets
+
+## API Usage Examples
+
+### Basic Anomaly Detection
+```python
+from anomaly_detector import AnomalyDetector
+
+detector = AnomalyDetector(rolling_months=9, sigma_threshold=3.0)
+anomalies = detector.detect_all_anomalies(df)
+
+# Get summary
+summary = detector.get_anomaly_summary(df, anomalies)
+
+# Explain specific anomaly
+explanation = detector.explain_anomaly(df, invoice_index, 'statistical')
+```
+
+### Custom Configuration
+```python
+# High sensitivity configuration
+sensitive_detector = AnomalyDetector(rolling_months=6, sigma_threshold=2.0)
+
+# Conservative configuration
+conservative_detector = AnomalyDetector(rolling_months=12, sigma_threshold=4.0)
+```
+
+This technical guide provides the foundation for understanding and customizing the anomaly detection system based on specific business requirements and operational contexts.
